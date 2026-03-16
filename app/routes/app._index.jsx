@@ -1,331 +1,231 @@
-import { useEffect } from "react";
-import { useFetcher } from "react-router";
-import { useAppBridge } from "@shopify/app-bridge-react";
-import { boundary } from "@shopify/shopify-app-react-router/server";
+import { data, redirect, Form, useActionData, useLoaderData } from "react-router";
+import {
+  listBundleCards,
+  pushBundleToProducts,
+  removeBundle,
+} from "../modules/bundles/bundle.service.server.js";
+import { toAdminProductUrl } from "../modules/shopify/product-links.js";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  const bundles = await listBundleCards({ admin, shop: session.shop });
 
-  return null;
+  return data({ bundles, shop: session.shop });
 };
 
 export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-            demoInfo: metafield(namespace: "$app", key: "demo_info") {
-              jsonValue
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-          metafields: [
-            {
-              namespace: "$app",
-              key: "demo_info",
-              value: "Created by React Router Template",
-            },
-          ],
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
-  const product = responseJson.data.productCreate.product;
-  const variantId = product.variants.edges[0].node.id;
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
-        }
-      }
-    }`,
-    {
-      variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
-  const variantResponseJson = await variantResponse.json();
-  const metaobjectResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpsertMetaobject($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
-      metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
-        metaobject {
-          id
-          handle
-          title: field(key: "title") {
-            jsonValue
-          }
-          description: field(key: "description") {
-            jsonValue
-          }
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }`,
-    {
-      variables: {
-        handle: {
-          type: "$app:example",
-          handle: "demo-entry",
-        },
-        metaobject: {
-          fields: [
-            { key: "title", value: "Demo Entry" },
-            {
-              key: "description",
-              value:
-                "This metaobject was created by the Shopify app template to demonstrate the metaobject API.",
-            },
-          ],
-        },
-      },
-    },
-  );
-  const metaobjectResponseJson = await metaobjectResponse.json();
+  const { admin, session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = String(formData.get("intent") ?? "");
+  const bundleId = String(formData.get("bundleId") ?? "");
 
-  return {
-    product: responseJson.data.productCreate.product,
-    variant: variantResponseJson.data.productVariantsBulkUpdate.productVariants,
-    metaobject: metaobjectResponseJson.data.metaobjectUpsert.metaobject,
-  };
+  if (intent === "delete") {
+    try {
+      await removeBundle({
+        bundleId,
+        shop: session.shop,
+      });
+      return redirect("/app");
+    } catch (error) {
+      return data(
+        {
+          error: error instanceof Error ? error.message : "Unable to delete bundle.",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
+  if (intent === "push") {
+    try {
+      const bundle = await pushBundleToProducts({
+        admin,
+        shop: session.shop,
+        bundleId,
+      });
+
+      return data({ success: `${bundle.name} was pushed to Shopify Products.` });
+    } catch (error) {
+      return data(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to push this bundle to Shopify Products.",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
+  return data({ error: "Unsupported action." }, { status: 400 });
 };
 
-export default function Index() {
-  const fetcher = useFetcher();
-  const shopify = useAppBridge();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
+function renderBundleProduct(bundle, shop) {
+  if (!bundle.bundleProduct) {
+    return <span style={styles.mutedText}>Not pushed</span>;
+  }
 
-  useEffect(() => {
-    if (fetcher.data?.product?.id) {
-      shopify.toast.show("Product created");
-    }
-  }, [fetcher.data?.product?.id, shopify]);
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
+  const productUrl = toAdminProductUrl(shop, bundle.bundleProduct.id);
 
   return (
-    <s-page heading="Shopify app template">
-      <s-button slot="primary-action" onClick={generateProduct}>
-        Generate a product
-      </s-button>
+    <div style={styles.productCell}>
+      <div>{bundle.bundleProduct.title}</div>
+      <div style={styles.bundleMeta}>
+        Status: {String(bundle.bundleProduct.status ?? "unknown").toLowerCase()}
+      </div>
+      {productUrl ? (
+        <a href={productUrl} target="_top" rel="noreferrer" style={styles.inlineLink}>
+          View in Products
+        </a>
+      ) : null}
+    </div>
+  );
+}
 
-      <s-section heading="Congrats on creating a new Shopify app 🎉">
-        <s-paragraph>
-          This embedded app template uses{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/tools/app-bridge"
-            target="_blank"
-          >
-            App Bridge
-          </s-link>{" "}
-          interface examples like an{" "}
-          <s-link href="/app/additional">additional page in the app nav</s-link>
-          , as well as an{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            Admin GraphQL
-          </s-link>{" "}
-          mutation demo, to provide a starting point for app development.
-        </s-paragraph>
+export default function BundleListPage() {
+  const { bundles, shop } = useLoaderData();
+  const actionData = useActionData();
+
+  return (
+    <s-page heading="Bundles" subheading="Two-product bundles powered by existing Shopify products">
+      <s-section slot="aside">
+        <a href="/app/bundles/new" style={styles.primaryLink}>
+          Create bundle
+        </a>
       </s-section>
-      <s-section heading="Get started with products">
-        <s-paragraph>
-          Generate a product with GraphQL and get the JSON output for that
-          product. Learn more about the{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-            target="_blank"
-          >
-            productCreate
-          </s-link>{" "}
-          mutation in our API references. Includes a product{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data/metafields"
-            target="_blank"
-          >
-            metafield
-          </s-link>{" "}
-          and{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data/metaobjects"
-            target="_blank"
-          >
-            metaobject
-          </s-link>
-          .
-        </s-paragraph>
-        <s-stack direction="inline" gap="base">
-          <s-button
-            onClick={generateProduct}
-            {...(isLoading ? { loading: true } : {})}
-          >
-            Generate a product
-          </s-button>
-          {fetcher.data?.product && (
-            <s-button
-              onClick={() => {
-                shopify.intents.invoke?.("edit:shopify/Product", {
-                  value: fetcher.data?.product?.id,
-                });
-              }}
-              target="_blank"
-              variant="tertiary"
-            >
-              Edit product
-            </s-button>
-          )}
-        </s-stack>
-        {fetcher.data?.product && (
-          <s-section heading="productCreate mutation">
-            <s-stack direction="block" gap="base">
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.product, null, 2)}</code>
-                </pre>
-              </s-box>
-
-              <s-heading>productVariantsBulkUpdate mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.variant, null, 2)}</code>
-                </pre>
-              </s-box>
-
-              <s-heading>metaobjectUpsert mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>
-                    {JSON.stringify(fetcher.data.metaobject, null, 2)}
-                  </code>
-                </pre>
-              </s-box>
-            </s-stack>
-          </s-section>
-        )}
-      </s-section>
-
-      <s-section slot="aside" heading="App template specs">
-        <s-paragraph>
-          <s-text>Framework: </s-text>
-          <s-link href="https://reactrouter.com/" target="_blank">
-            React Router
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Interface: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/app-home/using-polaris-components"
-            target="_blank"
-          >
-            Polaris web components
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>API: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            GraphQL
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Custom data: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data"
-            target="_blank"
-          >
-            Metafields &amp; metaobjects
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Database: </s-text>
-          <s-link href="https://www.prisma.io/" target="_blank">
-            Prisma
-          </s-link>
-        </s-paragraph>
-      </s-section>
-
-      <s-section slot="aside" heading="Next steps">
-        <s-unordered-list>
-          <s-list-item>
-            Build an{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/getting-started/build-app-example"
-              target="_blank"
-            >
-              example app
-            </s-link>
-          </s-list-item>
-          <s-list-item>
-            Explore Shopify&apos;s API with{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-              target="_blank"
-            >
-              GraphiQL
-            </s-link>
-          </s-list-item>
-        </s-unordered-list>
-      </s-section>
+      {actionData?.error ? <div style={styles.error}>{actionData.error}</div> : null}
+      {actionData?.success ? <div style={styles.success}>{actionData.success}</div> : null}
+      {bundles.length ? (
+        <s-section heading="Bundle list">
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th align="left">Bundle</th>
+                <th align="left">Product A</th>
+                <th align="left">Product B</th>
+                <th align="left">Pushed product</th>
+                <th align="left">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bundles.map((bundle) => (
+                <tr key={bundle.id} style={styles.row}>
+                  <td style={styles.bundleCell}>
+                    <div style={styles.bundleName}>{bundle.name}</div>
+                    <div style={styles.bundleMeta}>
+                      Updated {new Date(bundle.updatedAt).toLocaleDateString()}
+                    </div>
+                  </td>
+                  <td>{bundle.productA?.title ?? "Product removed"}</td>
+                  <td>{bundle.productB?.title ?? "Product removed"}</td>
+                  <td>{renderBundleProduct(bundle, shop)}</td>
+                  <td>
+                    <div style={styles.actions}>
+                      <s-link href={`/app/bundles/${bundle.id}`}>Edit</s-link>
+                      <Form method="post">
+                        <input type="hidden" name="intent" value="push" />
+                        <input type="hidden" name="bundleId" value={bundle.id} />
+                        <button type="submit" style={styles.secondaryButton}>
+                          {bundle.bundleProduct ? "Sync product" : "Push to products"}
+                        </button>
+                      </Form>
+                      <Form method="post">
+                        <input type="hidden" name="intent" value="delete" />
+                        <input type="hidden" name="bundleId" value={bundle.id} />
+                        <button type="submit" style={styles.deleteButton}>
+                          Delete
+                        </button>
+                      </Form>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </s-section>
+      ) : (
+        <s-section heading="No bundles yet">
+          <s-paragraph>
+            Create your first bundle by selecting two existing Shopify products. Then use
+            Push to products to create the matching Shopify product entry.
+          </s-paragraph>
+        </s-section>
+      )}
     </s-page>
   );
 }
 
-export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
+const styles = {
+  primaryLink: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "999px",
+    background: "#111827",
+    color: "#fff",
+    padding: "0.75rem 1.25rem",
+    textDecoration: "none",
+    fontWeight: 600,
+  },
+  success: {
+    marginBottom: "1rem",
+    color: "#166534",
+  },
+  error: {
+    marginBottom: "1rem",
+    color: "#8b1e1e",
+  },
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+  },
+  row: {
+    borderTop: "1px solid #d9d9d9",
+  },
+  bundleCell: {
+    padding: "0.75rem 0",
+  },
+  productCell: {
+    display: "grid",
+    gap: "0.25rem",
+    padding: "0.75rem 0",
+  },
+  bundleName: {
+    fontWeight: 600,
+  },
+  bundleMeta: {
+    color: "#666",
+  },
+  mutedText: {
+    color: "#666",
+  },
+  inlineLink: {
+    color: "#0f766e",
+    textDecoration: "none",
+  },
+  actions: {
+    display: "flex",
+    gap: "0.75rem",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  secondaryButton: {
+    border: "1px solid #d1d5db",
+    borderRadius: "999px",
+    background: "#fff",
+    color: "#111827",
+    cursor: "pointer",
+    padding: "0.5rem 0.9rem",
+    font: "inherit",
+  },
+  deleteButton: {
+    border: 0,
+    background: "transparent",
+    color: "#8b1e1e",
+    cursor: "pointer",
+    padding: 0,
+    font: "inherit",
+  },
 };

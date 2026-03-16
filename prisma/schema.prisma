@@ -32,3 +32,17 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model Bundle {
+  id              String   @id @default(uuid())
+  shop            String
+  name            String
+  productAId      String
+  productBId      String
+  bundleProductId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([shop])
+  @@index([bundleProductId])
+}
