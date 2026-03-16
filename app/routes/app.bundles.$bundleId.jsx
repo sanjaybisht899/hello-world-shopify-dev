@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Form,
+  Link,
   data,
   redirect,
   useActionData,
@@ -12,6 +13,7 @@ import {
   getBundleEditorData,
   getProductPickerDefaults,
   pushBundleToProducts,
+  removeBundle,
   saveBundle,
 } from "../modules/bundles/bundle.service.server.js";
 import { toAdminProductUrl } from "../modules/shopify/product-links.js";
@@ -36,6 +38,28 @@ export const action = async ({ request, params }) => {
   const formData = await request.formData();
   const bundleId = params.bundleId === "new" ? null : params.bundleId;
   const intent = String(formData.get("intent") ?? "save");
+
+  if (intent === "delete") {
+    if (!bundleId) {
+      return data({ error: "Bundle not found." }, { status: 404 });
+    }
+
+    try {
+      await removeBundle({
+        bundleId,
+        shop: session.shop,
+      });
+
+      return redirect("/app");
+    } catch (error) {
+      return data(
+        {
+          error: error instanceof Error ? error.message : "Unable to delete bundle.",
+        },
+        { status: 400 },
+      );
+    }
+  }
 
   if (intent === "push") {
     if (!bundleId) {
@@ -246,7 +270,7 @@ export default function BundleEditorPage() {
             >
               {isSubmitting ? "Saving..." : "Save bundle"}
             </button>
-            <s-link href="/app">Back to bundles</s-link>
+            <Link to="/app" style={styles.backLink}>Back to bundles</Link>
           </div>
         </Form>
       </s-section>
@@ -273,12 +297,20 @@ export default function BundleEditorPage() {
               This bundle has not been pushed to Shopify Products yet.
             </div>
           )}
-          <Form method="post">
-            <input type="hidden" name="intent" value="push" />
-            <button type="submit" style={styles.secondaryButton} disabled={isSubmitting}>
-              {bundle.bundleProduct ? "Sync product" : "Push to products"}
-            </button>
-          </Form>
+          <div style={styles.pushActions}>
+            <Form method="post">
+              <input type="hidden" name="intent" value="push" />
+              <button type="submit" style={styles.secondaryButton} disabled={isSubmitting}>
+                {bundle.bundleProduct ? "Sync product" : "Push to products"}
+              </button>
+            </Form>
+            <Form method="post">
+              <input type="hidden" name="intent" value="delete" />
+              <button type="submit" style={styles.deleteButton} disabled={isSubmitting}>
+                Delete bundle
+              </button>
+            </Form>
+          </div>
         </s-section>
       ) : null}
       <s-section slot="aside" heading="Variant behavior">
@@ -381,6 +413,11 @@ const styles = {
     alignItems: "center",
     marginTop: "1rem",
   },
+  backLink: {
+    color: "#2c6ecb",
+    textDecoration: "none",
+    fontWeight: 500,
+  },
   primaryButton: {
     border: 0,
     borderRadius: "999px",
@@ -405,8 +442,23 @@ const styles = {
     display: "grid",
     gap: "0.35rem",
   },
+  pushActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.85rem",
+    flexWrap: "wrap",
+  },
   inlineLink: {
     color: "#0f766e",
     textDecoration: "none",
+  },
+  deleteButton: {
+    marginTop: "1rem",
+    border: 0,
+    background: "transparent",
+    color: "#8b1e1e",
+    padding: 0,
+    cursor: "pointer",
+    font: "inherit",
   },
 };

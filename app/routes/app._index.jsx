@@ -1,11 +1,64 @@
-import { data, redirect, Form, useActionData, useLoaderData } from "react-router";
-import {
-  listBundleCards,
-  pushBundleToProducts,
-  removeBundle,
-} from "../modules/bundles/bundle.service.server.js";
-import { toAdminProductUrl } from "../modules/shopify/product-links.js";
+import { Link, data, useLoaderData } from "react-router";
+import { listBundleCards } from "../modules/bundles/bundle.service.server.js";
 import { authenticate } from "../shopify.server";
+
+const moneyFormatter = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+function getVariantPrice(product) {
+  const rawPrice = product?.variants?.[0]?.price;
+  const price = Number(rawPrice);
+
+  return Number.isFinite(price) ? price : null;
+}
+
+function getBundlePrice(bundle) {
+  const productAPrice = getVariantPrice(bundle.productA);
+  const productBPrice = getVariantPrice(bundle.productB);
+
+  if (productAPrice == null || productBPrice == null) {
+    return null;
+  }
+
+  return productAPrice + productBPrice;
+}
+
+function formatBundlePrice(bundle) {
+  const total = getBundlePrice(bundle);
+
+  return total == null ? "--" : moneyFormatter.format(total);
+}
+
+function BundleThumbnail() {
+  return (
+    <div style={styles.thumbnailFrame} aria-hidden="true">
+      <svg viewBox="0 0 20 20" fill="none" style={styles.thumbnailSvg}>
+        <rect x="4.25" y="4.25" width="11.5" height="11.5" rx="2" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+        <path
+          d="M6.5 13.25l2.2-2.3 1.85 1.9 2.95-3.1"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  );
+}
+
+function WindowIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" style={styles.windowSvg} aria-hidden="true">
+      <rect x="3.5" y="4.5" width="13" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6.5 3.5v3M13.5 3.5v3M3.5 8h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -14,218 +67,282 @@ export const loader = async ({ request }) => {
   return data({ bundles, shop: session.shop });
 };
 
-export const action = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
-  const formData = await request.formData();
-  const intent = String(formData.get("intent") ?? "");
-  const bundleId = String(formData.get("bundleId") ?? "");
-
-  if (intent === "delete") {
-    try {
-      await removeBundle({
-        bundleId,
-        shop: session.shop,
-      });
-      return redirect("/app");
-    } catch (error) {
-      return data(
-        {
-          error: error instanceof Error ? error.message : "Unable to delete bundle.",
-        },
-        { status: 400 },
-      );
-    }
-  }
-
-  if (intent === "push") {
-    try {
-      const bundle = await pushBundleToProducts({
-        admin,
-        shop: session.shop,
-        bundleId,
-      });
-
-      return data({ success: `${bundle.name} was pushed to Shopify Products.` });
-    } catch (error) {
-      return data(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to push this bundle to Shopify Products.",
-        },
-        { status: 400 },
-      );
-    }
-  }
-
-  return data({ error: "Unsupported action." }, { status: 400 });
-};
-
-function renderBundleProduct(bundle, shop) {
-  if (!bundle.bundleProduct) {
-    return <span style={styles.mutedText}>Not pushed</span>;
-  }
-
-  const productUrl = toAdminProductUrl(shop, bundle.bundleProduct.id);
+export default function BundleListPage() {
+  const { bundles, shop } = useLoaderData();
+  const productListUrl = `https://${shop}/admin/products`;
 
   return (
-    <div style={styles.productCell}>
-      <div>{bundle.bundleProduct.title}</div>
-      <div style={styles.bundleMeta}>
-        Status: {String(bundle.bundleProduct.status ?? "unknown").toLowerCase()}
+    <div style={styles.page}>
+      <div style={styles.container}>
+        <div style={styles.headerRow}>
+          <div>
+            <h1 style={styles.heading}>Bundles</h1>
+          </div>
+          <div style={styles.headerActions}>
+            <a href={productListUrl} target="_top" rel="noreferrer" style={styles.secondaryLink}>
+              View in product list
+            </a>
+            <Link to="/app/bundles/new" style={styles.primaryLink}>
+              Create bundle
+            </Link>
+          </div>
+        </div>
+
+        <section style={styles.metricsCard}>
+          <div style={styles.windowCell}>
+            <div style={styles.windowIcon}>
+              <WindowIcon />
+            </div>
+            <div style={styles.windowLabel}>30 days</div>
+          </div>
+          <div style={styles.metricCell}>
+            <div style={styles.metricLabel}>Bundle total sales</div>
+            <div style={styles.metricValue}>INR 0 --</div>
+            <div style={styles.metricBar} />
+          </div>
+          <div style={styles.metricCell}>
+            <div style={styles.metricLabel}>Bundle orders</div>
+            <div style={styles.metricValue}>0 --</div>
+            <div style={styles.metricBar} />
+          </div>
+          <div style={styles.metricCell}>
+            <div style={styles.metricLabel}>Top total sales</div>
+            <div style={styles.metricValueMuted}>No data</div>
+          </div>
+          <div style={styles.metricCell}>
+            <div style={styles.metricLabel}>Most ordered</div>
+            <div style={styles.metricValueMuted}>No data</div>
+          </div>
+        </section>
+
+        <section style={styles.listCard}>
+          <div style={styles.tableHeader}>
+            <div>Title</div>
+            <div>Price</div>
+          </div>
+          {bundles.length ? (
+            bundles.map((bundle, index) => (
+              <div
+                key={bundle.id}
+                style={{
+                  ...styles.row,
+                  ...(index < bundles.length - 1 ? styles.rowBorder : {}),
+                }}
+              >
+                <div style={styles.titleCell}>
+                  <BundleThumbnail />
+                  <Link to={`/app/bundles/${bundle.id}`} style={styles.bundleLink}>
+                    {bundle.name}
+                  </Link>
+                </div>
+                <div style={styles.priceCell}>{formatBundlePrice(bundle)}</div>
+              </div>
+            ))
+          ) : (
+            <div style={styles.emptyState}>No bundles yet. Create your first bundle.</div>
+          )}
+        </section>
+
+        <div style={styles.footerNote}>
+          Learn more about <Link to="/app/bundles/new" style={styles.footerLink}>creating bundles</Link>
+        </div>
       </div>
-      {productUrl ? (
-        <a href={productUrl} target="_top" rel="noreferrer" style={styles.inlineLink}>
-          View in Products
-        </a>
-      ) : null}
     </div>
   );
 }
 
-export default function BundleListPage() {
-  const { bundles, shop } = useLoaderData();
-  const actionData = useActionData();
-
-  return (
-    <s-page heading="Bundles" subheading="Two-product bundles powered by existing Shopify products">
-      <s-section slot="aside">
-        <a href="/app/bundles/new" style={styles.primaryLink}>
-          Create bundle
-        </a>
-      </s-section>
-      {actionData?.error ? <div style={styles.error}>{actionData.error}</div> : null}
-      {actionData?.success ? <div style={styles.success}>{actionData.success}</div> : null}
-      {bundles.length ? (
-        <s-section heading="Bundle list">
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th align="left">Bundle</th>
-                <th align="left">Product A</th>
-                <th align="left">Product B</th>
-                <th align="left">Pushed product</th>
-                <th align="left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bundles.map((bundle) => (
-                <tr key={bundle.id} style={styles.row}>
-                  <td style={styles.bundleCell}>
-                    <div style={styles.bundleName}>{bundle.name}</div>
-                    <div style={styles.bundleMeta}>
-                      Updated {new Date(bundle.updatedAt).toLocaleDateString()}
-                    </div>
-                  </td>
-                  <td>{bundle.productA?.title ?? "Product removed"}</td>
-                  <td>{bundle.productB?.title ?? "Product removed"}</td>
-                  <td>{renderBundleProduct(bundle, shop)}</td>
-                  <td>
-                    <div style={styles.actions}>
-                      <s-link href={`/app/bundles/${bundle.id}`}>Edit</s-link>
-                      <Form method="post">
-                        <input type="hidden" name="intent" value="push" />
-                        <input type="hidden" name="bundleId" value={bundle.id} />
-                        <button type="submit" style={styles.secondaryButton}>
-                          {bundle.bundleProduct ? "Sync product" : "Push to products"}
-                        </button>
-                      </Form>
-                      <Form method="post">
-                        <input type="hidden" name="intent" value="delete" />
-                        <input type="hidden" name="bundleId" value={bundle.id} />
-                        <button type="submit" style={styles.deleteButton}>
-                          Delete
-                        </button>
-                      </Form>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </s-section>
-      ) : (
-        <s-section heading="No bundles yet">
-          <s-paragraph>
-            Create your first bundle by selecting two existing Shopify products. Then use
-            Push to products to create the matching Shopify product entry.
-          </s-paragraph>
-        </s-section>
-      )}
-    </s-page>
-  );
-}
-
 const styles = {
+  page: {
+    minHeight: "100%",
+    background: "#f6f6f7",
+    padding: "1.5rem 2rem 3rem",
+  },
+  container: {
+    maxWidth: "880px",
+    margin: "0 auto",
+  },
+  headerRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "1rem",
+    marginBottom: "1rem",
+  },
+  heading: {
+    margin: 0,
+    fontSize: "2rem",
+    lineHeight: 1.2,
+    fontWeight: 700,
+    color: "#202223",
+  },
+  headerActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.75rem",
+  },
   primaryLink: {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: "999px",
-    background: "#111827",
-    color: "#fff",
-    padding: "0.75rem 1.25rem",
+    borderRadius: "0.6rem",
+    background: "#202223",
+    color: "#ffffff",
+    padding: "0.55rem 0.9rem",
     textDecoration: "none",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.16)",
+  },
+  secondaryLink: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "0.6rem",
+    background: "#ffffff",
+    color: "#202223",
+    padding: "0.55rem 0.9rem",
+    textDecoration: "none",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    boxShadow: "inset 0 0 0 1px #d2d5d8",
+  },
+  metricsCard: {
+    display: "grid",
+    gridTemplateColumns: "0.9fr 1.45fr 1.45fr 1.4fr 1.4fr",
+    background: "#ffffff",
+    borderRadius: "0.95rem",
+    border: "1px solid #e3e5e7",
+    overflow: "hidden",
+    marginBottom: "0.9rem",
+  },
+  windowCell: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+    padding: "0.95rem 1rem",
+    borderRight: "1px solid #e3e5e7",
+    color: "#202223",
+    fontSize: "0.9rem",
     fontWeight: 600,
   },
-  success: {
-    marginBottom: "1rem",
-    color: "#166534",
+  windowIcon: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "1.1rem",
+    height: "1.1rem",
+    color: "#202223",
   },
-  error: {
-    marginBottom: "1rem",
-    color: "#8b1e1e",
+  windowSvg: {
+    width: "1rem",
+    height: "1rem",
+    color: "#202223",
   },
-  table: {
+  windowLabel: {
+    whiteSpace: "nowrap",
+  },
+  metricCell: {
+    padding: "0.7rem 1rem",
+    borderRight: "1px solid #e3e5e7",
+  },
+  metricLabel: {
+    fontSize: "0.78rem",
+    fontWeight: 600,
+    color: "#202223",
+    marginBottom: "0.35rem",
+  },
+  metricValue: {
+    fontSize: "1rem",
+    fontWeight: 600,
+    color: "#202223",
+    marginBottom: "0.45rem",
+  },
+  metricValueMuted: {
+    fontSize: "0.95rem",
+    color: "#6d7175",
+  },
+  metricBar: {
+    height: "2px",
+    borderRadius: "999px",
+    background: "#2c6ecb",
     width: "100%",
-    borderCollapse: "collapse",
+  },
+  listCard: {
+    background: "#ffffff",
+    borderRadius: "0.95rem",
+    border: "1px solid #e3e5e7",
+    overflow: "hidden",
+  },
+  tableHeader: {
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: "1rem",
+    padding: "0.65rem 1rem",
+    fontSize: "0.78rem",
+    color: "#6d7175",
+    borderBottom: "1px solid #eef0f1",
   },
   row: {
-    borderTop: "1px solid #d9d9d9",
-  },
-  bundleCell: {
-    padding: "0.75rem 0",
-  },
-  productCell: {
     display: "grid",
-    gap: "0.25rem",
-    padding: "0.75rem 0",
-  },
-  bundleName: {
-    fontWeight: 600,
-  },
-  bundleMeta: {
-    color: "#666",
-  },
-  mutedText: {
-    color: "#666",
-  },
-  inlineLink: {
-    color: "#0f766e",
-    textDecoration: "none",
-  },
-  actions: {
-    display: "flex",
-    gap: "0.75rem",
+    gridTemplateColumns: "1fr auto",
+    gap: "1rem",
     alignItems: "center",
-    flexWrap: "wrap",
+    padding: "1rem",
   },
-  secondaryButton: {
-    border: "1px solid #d1d5db",
-    borderRadius: "999px",
-    background: "#fff",
-    color: "#111827",
-    cursor: "pointer",
-    padding: "0.5rem 0.9rem",
-    font: "inherit",
+  rowBorder: {
+    borderBottom: "1px solid #eef0f1",
   },
-  deleteButton: {
-    border: 0,
-    background: "transparent",
-    color: "#8b1e1e",
-    cursor: "pointer",
-    padding: 0,
-    font: "inherit",
+  titleCell: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.75rem",
+    minWidth: 0,
+  },
+  thumbnailFrame: {
+    width: "1.95rem",
+    height: "1.95rem",
+    borderRadius: "0.45rem",
+    background: "#ffffff",
+    border: "1px solid #e3e5e7",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  thumbnailSvg: {
+    width: "0.95rem",
+    height: "0.95rem",
+    color: "#8c9196",
+  },
+  bundleLink: {
+    color: "#202223",
+    textDecoration: "none",
+    fontSize: "0.92rem",
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  priceCell: {
+    color: "#202223",
+    fontSize: "0.92rem",
+    fontWeight: 500,
+    textAlign: "right",
+  },
+  emptyState: {
+    padding: "1rem",
+    color: "#6d7175",
+    fontSize: "0.92rem",
+  },
+  footerNote: {
+    marginTop: "1.5rem",
+    textAlign: "center",
+    color: "#6d7175",
+    fontSize: "0.92rem",
+  },
+  footerLink: {
+    color: "#2c6ecb",
+    textDecoration: "none",
+    fontWeight: 600,
   },
 };
