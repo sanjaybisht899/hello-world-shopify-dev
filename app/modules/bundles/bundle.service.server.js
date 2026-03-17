@@ -105,7 +105,12 @@ export async function saveBundle({ admin, shop, bundleId, values }) {
   });
 }
 
-export async function pushBundleToProducts({ admin, shop, bundleId }) {
+export async function pushBundleToProducts({
+  admin,
+  shop,
+  bundleId,
+  productOverrides = {},
+}) {
   const bundle = await getBundleById(bundleId, shop);
 
   if (!bundle) {
@@ -116,7 +121,8 @@ export async function pushBundleToProducts({ admin, shop, bundleId }) {
   const productMap = new Map(products.map((product) => [product.id, product]));
   const productA = productMap.get(bundle.productAId);
   const productB = productMap.get(bundle.productBId);
-  const existingBundleProductId = productMap.get(bundle.bundleProductId)?.id ?? null;
+  const existingBundleProduct = productMap.get(bundle.bundleProductId) ?? null;
+  const existingBundleProductId = existingBundleProduct?.id ?? null;
 
   if (!productA || !productB) {
     throw new Error("One or both linked products could not be found in Shopify.");
@@ -125,8 +131,10 @@ export async function pushBundleToProducts({ admin, shop, bundleId }) {
   const pushedProduct = await pushBundleProductToShopify(admin, {
     bundle,
     existingBundleProductId,
+    existingBundleProduct,
     productA,
     productB,
+    productOverrides,
   });
 
   const persistedBundle = await setBundleProductId(bundle.id, shop, pushedProduct.id);
